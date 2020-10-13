@@ -3,7 +3,7 @@ from controller import BaseController
 
 class RecurrentController(BaseController):
     def network_vars(self):
-        self.lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(100)
+        self.lstm_cell = tf.nn.rnn_cell.LSTMCell(100)
         self.state = tf.Variable(tf.zeros([self.batch_size, 100]), trainable=False)
         self.output = tf.Variable(tf.zeros([self.batch_size, 100]), trainable=False)
 
