@@ -6,6 +6,7 @@ import numpy as np
 import getopt
 import sys
 import os
+import time
 
 from ntm import NTM
 from feedforward_controller import FeedforwardController
@@ -42,7 +43,7 @@ if __name__ == '__main__':
     ckpts_dir = os.path.join(dirname , 'checkpoints')
     tb_logs_dir = os.path.join(dirname, 'logs')
 
-    batch_size = 1
+    batch_size = 30
     input_size = output_size = 10
     sequence_max_length = 10
     memory_size = 128
@@ -54,7 +55,8 @@ if __name__ == '__main__':
     momentum = 0.9
 
     from_checkpoint = None
-    iterations = 300000
+    iterations = 100000
+    log_frequency = 100
 
     options,_ = getopt.getopt(sys.argv[1:], '', ['checkpoint=', 'iterations='])
 
@@ -117,15 +119,16 @@ if __name__ == '__main__':
                 llprint("Done!\n")
 
             last_100_losses = []
+            last_time = time.clock()
 
             for i in range(iterations + 1):
-                llprint("\rIteration %d/%d" % (i, iterations))
+                #llprint("\rIteration %d/%d" % (i, iterations))
 
                 random_length = np.random.randint(1, sequence_max_length + 1)
                 input_data, target_output = generate_data(batch_size, random_length, input_size)
 
-                summarize = (i % 100 == 0)
-                take_checkpoint = ((i != 0) and (i % 1000 == 0)) or (i % iterations == 0)
+                summarize = (i % log_frequency == 0)
+                take_checkpoint = ((i != 0) and (i % 1000 == 0)) or (i == iterations)
 
                 loss_value,_ = session.run([
                     loss,
@@ -158,8 +161,12 @@ if __name__ == '__main__':
                     summarizer.add_summary(summary, i)
                     summarizer.add_summary(summary2, i)
 
-                    llprint("\n\tAvg. Logistic Loss: %.4f\n" % (np.mean(last_100_losses)))
+                    cycle_time = time.clock() - last_time
+                    print(f"Iteration: {i}/{iterations}")
+                    print("Avg. Logistic Loss: %.4f" % (np.mean(last_100_losses)/batch_size))
+                    print("Time needed: %.4f s, sample/sec: %d" % (cycle_time, log_frequency * batch_size / cycle_time))
                     last_100_losses = []
+                    last_time = time.clock()
 
                 if take_checkpoint:
                     llprint("\nSaving Checkpoint ... "),

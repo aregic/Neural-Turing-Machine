@@ -31,7 +31,6 @@ class NTM:
         batch_size: int
             the size of the data batch
         """
-
         self.input_size = input_size
         self.output_size = output_size
         self.memory_locations = memory_locations

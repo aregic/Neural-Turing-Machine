@@ -2,6 +2,69 @@ import tensorflow as tf
 import numpy as np
 import math
 
+
+# taken from https://github.com/tensorflow/tensorflow/issues/16831
+def dynamic_conv(
+        input,
+        filter,
+        strides=[1,1],
+        padding='SAME',
+        dilation_rate=None,
+):
+    """
+    Equivalent to tf.nn.convolution, but filter has additional
+    batch dimension. This allows the filter to be a function
+    of some input, hence, enabling dynamic convolutions.
+
+    Parameters
+    ----------
+    input:  A Tensor. Must be one of the following types: float32, float64, int64, int32,
+            uint8, uint16, int16, int8, complex64, complex128, qint8, quint8, qint32, half.
+            2d case:
+            Shape [batch, in_depth, in_height, in_channels].
+            3d case:
+            Shape [batch, in_depth, in_height, in_width, in_channels].
+
+    filter: A Tensor. Must have the same type as input.
+            in_channels must match between input and filter.
+            2d case:
+            Shape [batch, filter_x, filter_y, in_ch, out_ch].
+            3d case:
+            Shape [batch, filter_x, filter_y, filter_z, in_ch, out_ch] .
+
+    strides:    see tf.nn.convolution
+    padding:    see tf.nn.convolution
+
+    dilation_rate: see tf.nn.convolution
+
+    Returns
+    -------
+            A Tensor. Has the same type as input.
+    """
+
+    assert len(filter.get_shape()) == len(input.get_shape()) + 1
+    assert filter.get_shape()[0] == input.get_shape()[0]
+
+    split_inputs = tf.split(input,
+                            input.get_shape().as_list()[0],
+                            axis=0)
+    split_filters = tf.unstack(filter,
+                               input.get_shape().as_list()[0],
+                               axis=0)
+
+    output_list = []
+    for split_input, split_filter in zip(split_inputs,split_filters):
+        output_list.append(
+            tf.nn.convolution(split_input,
+                              split_filter,
+                              strides=strides,
+                              padding=padding,
+                              dilation_rate=dilation_rate)
+        )
+    output = tf.concat(output_list, axis=0)
+    return output
+
+
 class Memory:
 
     def __init__(self, memory_locations=128, word_size=20, read_heads=1, batch_size=1):
@@ -100,43 +163,28 @@ class Memory:
         Returns: Tensor (batch_size, memory_locations, number_of_keys)
             weights after circular Convolution
         """
+        gated_weighting = tf.concat(
+            [
+                tf.expand_dims(gated_weighting[:, -1, :], axis=-1),
+                gated_weighting,
+                tf.expand_dims(gated_weighting[:, 0, :], axis=-1)
+            ],
+            1)
 
-        '''
-        size = int(gated_weighting.get_shape()[1])
-        kernel_size = int(shift_weighting.get_shape()[1])
-        kernel_shift = int(math.floor(kernel_size/2.0))
-
-        def loop(idx):
-            if idx < 0: return size + idx
-            if idx >= size : return idx - size
-            else: return idx
-
-        kernels = []
-        for i in xrange(size):
-            indices = [loop(i+j) for j in xrange(kernel_shift, -kernel_shift-1, -1)]
-            v_ = tf.transpose(tf.gather(tf.transpose(gated_weighting,perm=(1,2,0)), indices),perm=(2,0,1))
-            kernels.append(tf.reduce_sum(v_ * shift_weighting, 1))
-
-        return tf.stack(kernels, axis=1)
-        '''
-
-        # TODO: This circular convolution is more efficient than the commented code, but it was harcoded for a batch_size=1
-        #       and for a shift_vector with 3 elements.
-                   
-        gated_weighting = tf.concat([tf.expand_dims(gated_weighting[:,-1,:], axis=-1), gated_weighting, tf.expand_dims(gated_weighting[:,0,:], axis=-1)], 1)
-
-        gated_weighting = tf.expand_dims(gated_weighting,0)
+        # tensorflow only handles first dimension as batch if the tensor has at least 4 dimensions
+        #   (BHWC representation)
+        # shift_weighting needs a 5th dimension for the dynamic convolution
+        gated_weighting = tf.expand_dims(gated_weighting,-1)
+        shift_weighting = tf.expand_dims(shift_weighting,-1)
         shift_weighting = tf.expand_dims(shift_weighting,-1)
 
-        conv = tf.nn.conv2d(
+        conv = dynamic_conv(
             gated_weighting,
             shift_weighting,
-            strides=[1, 1, 1, 1],
-            padding="VALID")
+            padding='VALID')
+        return tf.squeeze(conv, axis=-1)
 
-        return tf.squeeze(conv, axis=0)
-
-    def sharp_weights(self,after_conv_shift, sharp_gamma):
+    def sharp_weights(self, after_conv_shift, sharp_gamma):
         """
         Sharpens the final weights
 
